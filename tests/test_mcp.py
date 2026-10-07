@@ -16,8 +16,16 @@ async def test_real_stdio_transport(tmp_path):
             {"input_repository": str(repo), "output_root": str(tmp_path / "runs"), "releases": {}}
         )
     )
+    # Model a sourced stack exposing a conflicting MCP package via PYTHONPATH.
+    shadow = tmp_path / "stack-packages"
+    (shadow / "mcp").mkdir(parents=True)
+    (shadow / "mcp" / "__init__.py").write_text(
+        'raise RuntimeError("Inherited stack package must not be imported")\n'
+    )
     server = StdioServerParameters(
-        command=sys.executable, args=["-m", "mcp_server_key4hep.server", "--config", str(config)]
+        command=sys.executable,
+        args=["-I", "-m", "mcp_server_key4hep.server", "--config", str(config)],
+        env={"PYTHONPATH": str(shadow)},
     )
     async with stdio_client(server) as (read, write):
         async with ClientSession(read, write) as session:

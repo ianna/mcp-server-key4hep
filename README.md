@@ -49,8 +49,16 @@ the CVMFS release and all referenced package content for long-term replay.
 Start the server:
 
 ```sh
-.venv/bin/mcp-server-key4hep --config /your/config/key4hep-server.json
+.venv/bin/python -I -m mcp_server_key4hep.server --config /your/config/key4hep-server.json
 ```
+
+Use Python's `-I` isolated mode for the server and tests, especially in a shell
+where Key4hep has already been sourced. A virtual environment alone does not
+ignore `PYTHONPATH`: stack packages can override the versions installed in
+`.venv` (for example, pytest 9.0.0 overriding the locked pytest 9.1.1).
+`-I` ignores Python environment variables and user site packages while retaining
+the virtual environment's installed packages. Generator/validator subprocesses
+still load their explicitly selected Key4hep stack normally.
 
 For an MCP client supporting `mcpServers` JSON:
 
@@ -58,8 +66,8 @@ For an MCP client supporting `mcpServers` JSON:
 {
   "mcpServers": {
     "key4hep": {
-      "command": "/absolute/path/to/mcp-server-key4hep/.venv/bin/mcp-server-key4hep",
-      "args": ["--config", "/your/config/key4hep-server.json"]
+      "command": "/absolute/path/to/mcp-server-key4hep/.venv/bin/python",
+      "args": ["-I", "-m", "mcp_server_key4hep.server", "--config", "/your/config/key4hep-server.json"]
     }
   }
 }
@@ -196,7 +204,7 @@ seeds alone do not establish cross-platform bitwise reproducibility.
 
 ```sh
 uv sync --frozen
-.venv/bin/pytest -q
+.venv/bin/python -I -m pytest -q
 .venv/bin/ruff check src examples tests
 .venv/bin/ruff format --check src examples tests
 ```
