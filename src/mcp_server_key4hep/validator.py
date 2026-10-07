@@ -12,6 +12,7 @@ from pathlib import Path
 
 def validate(path, expected):
     import edm4hep  # noqa: F401
+    import ROOT
     from podio.reading import get_reader
 
     if expected <= 0 or not Path(path).is_file() or Path(path).stat().st_size == 0:
@@ -38,8 +39,15 @@ def validate(path, expected):
             for _ in collection:
                 pass
         particles = frame.get("MCParticles")
-        if str(particles.getTypeName()) != "edm4hep::MCParticleCollection":
-            raise ValueError("MCParticles has the wrong EDM4hep collection type")
+        # podio returns std::string_view from getTypeName(). Depending on the
+        # cppyy/ROOT version, str(view) may describe the proxy instead of its
+        # contents. Check the dictionary-backed C++ class, not its string proxy.
+        if not isinstance(particles, ROOT.edm4hep.MCParticleCollection):
+            actual = getattr(type(particles), "__cpp_name__", type(particles).__name__)
+            raise ValueError(
+                "MCParticles has the wrong EDM4hep collection type: "
+                f"expected edm4hep::MCParticleCollection, got {actual}"
+            )
         identifiers = set()
         for particle in particles:
             oid = particle.getObjectID()

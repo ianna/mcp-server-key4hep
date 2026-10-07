@@ -38,6 +38,15 @@ class Particle:
 
 class Collection(list):
     def getTypeName(self):
+        # Model a C++ string_view proxy whose Python str() is not its contents.
+        return SimpleNamespace(data=lambda: "edm4hep::MCParticleCollection")
+
+
+class OtherCollection(list):
+    __cpp_name__ = "edm4hep::ReconstructedParticleCollection"
+
+    def getTypeName(self):
+        # A matching display string is not proof of the correct C++ class.
         return "edm4hep::MCParticleCollection"
 
 
@@ -56,6 +65,11 @@ class Frame:
 def install_reader(monkeypatch, frames, categories=("events",)):
     reader = SimpleNamespace(categories=categories, get=lambda _: frames)
     monkeypatch.setitem(sys.modules, "edm4hep", SimpleNamespace())
+    monkeypatch.setitem(
+        sys.modules,
+        "ROOT",
+        SimpleNamespace(edm4hep=SimpleNamespace(MCParticleCollection=Collection)),
+    )
     monkeypatch.setitem(sys.modules, "podio", SimpleNamespace())
     monkeypatch.setitem(sys.modules, "podio.reading", SimpleNamespace(get_reader=lambda _: reader))
 
@@ -85,7 +99,15 @@ def test_rejects_bad_content(output, monkeypatch, case):
     elif case == "relation":
         frame = Frame([Particle(relations=[Particle(99)])])
     elif case == "type":
-        frame.particles.getTypeName = lambda: "OtherCollection"
+        frame.particles = OtherCollection(frame.particles)
     install_reader(monkeypatch, [frame], categories=() if case == "category" else ("events",))
     with pytest.raises(ValueError):
         validate(output, 2 if case == "count" else 1)
+
+
+def test_wrong_type_reports_actual_cpp_class(output, monkeypatch):
+    frame = Frame([Particle()])
+    frame.particles = OtherCollection(frame.particles)
+    install_reader(monkeypatch, [frame])
+    with pytest.raises(ValueError, match="got edm4hep::ReconstructedParticleCollection"):
+        validate(output, 1)
