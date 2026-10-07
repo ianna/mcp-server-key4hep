@@ -1,0 +1,11 @@
+# Basic self-contained Sindarin example. Values must match the MCP request.
+model = SM
+seed = 42
+n_events = 100
+sqrts = 91.2 GeV
+process mumu = "e-", "e+" => "mu-", "mu+"
+iterations = 3:10000
+integrate (mumu)
+$sample = "events"
+sample_format = hepmc
+simulate (mumu)
