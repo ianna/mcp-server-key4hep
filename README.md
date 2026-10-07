@@ -105,6 +105,30 @@ before manually resubmitting.
 
 ## Pythia workflow
 
+### First end-to-end check on a configured Linux host
+
+This command **generates physics events**, unlike `--check-config` or pytest.
+It starts a real MCP stdio connection, checks the committed inputs, submits ten
+electron-positron dimuon events at 91.2 GeV, waits, and verifies output provenance:
+
+```sh
+.venv/bin/python -I -m mcp_server_key4hep.smoke \
+  --config server-config.local.json \
+  --release 2026-04-08 --seed 42 --events 10
+```
+
+The configured repository must contain the committed `examples/pythia.py` and
+`examples/ee_mumu.cmd`. Do not start a separate server: the smoke client manages
+its lifetime. It prints a unique run directory immediately after submission,
+then state changes and the validation result. A failure exits nonzero and leaves
+the manifest and stage logs in that directory. The default five-minute timeout
+can be changed with `--timeout`; timeout or interruption cancels active work.
+
+This is a functional smoke test, not a statistical physics validation. Once it
+passes, connect the server to your agent using the MCP configuration above.
+
+### Submitting through an agent
+
 1. Review `examples/pythia.py` and `examples/ee_mumu.cmd` against the chosen stack.
 2. Commit the steering, card, and any supporting files to Git. The server refuses
    untracked files and changes relative to HEAD, including staged changes. It
