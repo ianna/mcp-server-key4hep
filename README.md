@@ -8,10 +8,21 @@ The runner enforces an explicit seed, an operator-configured pinned CVMFS setup,
 committed physics inputs, and a verified `provenance.json` next to
 `events.e4h.root`. Success requires a full podio read of the expected events.
 
-**Status:** control-plane and subprocess tests run without Key4hep. The included
-physics adapters target modern k4Gen with `pythiaExtraSettings` and k4FWCore
-`IOSvc`. They must be qualified on your selected Linux release before production.
-No real generator run has been performed as part of this implementation.
+**Status: early prototype.** A real Pythia smoke run passed on CERN LXPLUS with
+Key4hep release `2026-04-08` on 7 October 2026. The run generated 10 dimuon events
+at 91.2 GeV with seed 42, containing 131 MCParticles. The full-read EDM4hep
+structural validation passed, and provenance verification reported no errors.
+
+WHIZARD generation/conversion has **not yet been tested on LXPLUS**. Its tests
+use controlled substitutes for the physics stages. The local automated suite
+contains 53 passing tests covering the runner, MCP interface, and validation
+decisions; these are separate from the real Pythia smoke run.
+
+The smoke result establishes that this Pythia workflow executes and produces
+structurally valid output on that release. Event-by-event reproducibility,
+physics accuracy, and statistical agreement have **not** been established.
+The included adapters target modern k4Gen with `pythiaExtraSettings` and
+k4FWCore `IOSvc`; qualify your chosen release before production use.
 
 ## Install and configure
 
