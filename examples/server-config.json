@@ -6,7 +6,8 @@
   "max_parallel_jobs": 1,
   "releases": {
     "YOUR_VERIFIED_RELEASE_TAG": {
-      "setup_script": "/cvmfs/sw.hsf.org/REPLACE_WITH_VERIFIED_RELEASE_SETUP_PATH/setup.sh",
+      "setup_script": "/cvmfs/sw.hsf.org/key4hep/setup.sh",
+      "setup_args": ["-r", "YOUR_VERIFIED_RELEASE_TAG"],
       "setup_sha256": "REPLACE_WITH_SHA256_OF_SETUP_SCRIPT"
     }
   }

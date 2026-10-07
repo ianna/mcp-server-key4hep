@@ -161,8 +161,19 @@ def main():
         required=True,
         help="Operator-owned JSON config with repo, output root and pinned releases",
     )
+    parser.add_argument(
+        "--check-config",
+        action="store_true",
+        help="Check configured release paths/hashes without sourcing the stack or generating events",
+    )
     args = parser.parse_args()
     runner = Runner(json.loads(args.config.read_text()))
+    if args.check_config:
+        if not runner.releases:
+            parser.error("Configure at least one explicit release")
+        profiles = [runner.environment(tag) for tag in sorted(runner.releases)]
+        print(json.dumps({"valid": True, "releases": profiles}, indent=2))
+        return
     create_server(runner).run(transport="stdio")
 
 

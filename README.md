@@ -30,21 +30,45 @@ Edit the copied configuration:
 
 - `input_repository`: absolute Git **root**, containing all steering/cards.
 - `output_root`: writable run storage, preferably outside the source repository.
-- `releases`: explicit tag → actual release-specific setup script and its SHA-256.
+- `releases`: explicit tag → setup script, optional `setup_args`, and script SHA-256.
 - `stage_timeout_seconds`, `max_events`, `max_parallel_jobs`: execution limits.
 
-There is intentionally no guessed release setup path or default release. Locate
-and inspect the release-specific script on your host, then compute its digest:
+For the standard Key4hep selector, use the following release profile (with the
+actual SHA-256 computed on your host):
 
-```sh
-sha256sum /cvmfs/.../YOUR_RELEASE/.../setup.sh
+```json
+"2026-04-08": {
+  "setup_script": "/cvmfs/sw.hsf.org/key4hep/setup.sh",
+  "setup_args": ["-r", "2026-04-08"],
+  "setup_sha256": "REPLACE_WITH_SHA256_OF_SETUP_SCRIPT"
+}
 ```
 
-The declared release must be a path component in the specified or resolved setup
-path. Missing releases, floating paths, paths outside CVMFS, and checksum changes
-are rejected. The configuration file is controlled by the operator, not an MCP
-tool. A setup script hash does not preserve an entire dependency stack: retain
-the CVMFS release and all referenced package content for long-term replay.
+```sh
+sha256sum /cvmfs/sw.hsf.org/key4hep/setup.sh
+```
+
+The only accepted nonempty `setup_args` are exactly `["-r", declared_release]`.
+Alternatively, omit `setup_args` when using a release-specific setup path that
+contains the declared tag as a path component. Floating tags and paths, setup
+paths outside CVMFS, missing scripts, and checksum changes are rejected. The
+selector must successfully source the requested release before any stage runs;
+there is no fallback to latest. If the shared selector script changes, inspect
+it before updating the configured digest.
+
+The configuration file is controlled by the operator, not an MCP tool. A setup
+script hash does not preserve an entire dependency stack: retain the CVMFS
+release and all referenced package content for long-term replay.
+
+Check paths, release-selection policy and hashes without sourcing the stack or
+running generation:
+
+```sh
+.venv/bin/python -I -m mcp_server_key4hep.server --config /your/config/key4hep-server.json --check-config
+```
+
+This check does not confirm that the selected stack can load or run the physics
+adapters; stage execution performs setup and records its logs.
 
 Start the server:
 

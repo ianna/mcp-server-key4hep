@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import mcp_server_key4hep.runner as runner_module
 from mcp_server_key4hep.runner import Runner, check_whizard, committed_inputs, sha256, write_json
 
 
@@ -133,6 +134,85 @@ def test_releases_fail_closed(repo, tmp_path):
             runner.environment(tag)
     with pytest.raises(FileNotFoundError):
         runner.environment("2025-05-29")
+
+
+@pytest.mark.parametrize(
+    "setup_args",
+    [
+        [],
+        ["-r", "2026-04-08"],
+        ["-r", "latest"],
+        ["-r", "other"],
+        ["-r", "2026-04-08", "--extra"],
+        "-r 2026-04-08",
+    ],
+)
+def test_release_selector_policy(runner, monkeypatch, setup_args):
+    tag = "2026-04-08"
+    runner.releases = {
+        tag: {
+            "setup_script": "/cvmfs/sw.hsf.org/key4hep/setup.sh",
+            "setup_args": setup_args,
+            "setup_sha256": "a" * 64,
+        }
+    }
+    original_resolve = Path.resolve
+    monkeypatch.setattr(
+        Path,
+        "resolve",
+        lambda p, **kw: p if str(p).startswith("/cvmfs/") else original_resolve(p, **kw),
+    )
+    monkeypatch.setattr(runner_module, "sha256", lambda _: "a" * 64)
+    if setup_args == ["-r", tag]:
+        assert Runner.environment(runner, tag)["setup_args"] == ["-r", tag]
+    else:
+        with pytest.raises(ValueError):
+            Runner.environment(runner, tag)
+
+
+async def test_selector_receives_release_without_leaking_stage_arguments(runner, tmp_path):
+    directory = tmp_path / "job"
+    directory.mkdir()
+    setup = tmp_path / "selector.sh"
+    setup.write_text(
+        '[[ "$#" == 2 && "$1" == -r && "$2" == 2026-04-08 ]] || return 17\necho "release=$2"\n'
+    )
+    profile = {
+        "release": "2026-04-08",
+        "setup_script": str(setup),
+        "setup_args": ["-r", "2026-04-08"],
+        "setup_sha256": sha256(setup),
+    }
+    await runner.stage(
+        directory,
+        {"environment": profile, "stages": []},
+        "selector",
+        [sys.executable, "-c", 'print("stage ran")'],
+        {"PATH": "/usr/bin:/bin"},
+    )
+    assert (directory / "selector.stdout.log").read_text() == "release=2026-04-08\nstage ran\n"
+
+
+async def test_failed_selector_does_not_execute_stage(runner, tmp_path):
+    directory = tmp_path / "job"
+    directory.mkdir()
+    setup = tmp_path / "selector.sh"
+    setup.write_text("return 17\n")
+    profile = {
+        "release": "2026-04-08",
+        "setup_script": str(setup),
+        "setup_args": ["-r", "2026-04-08"],
+        "setup_sha256": sha256(setup),
+    }
+    with pytest.raises(RuntimeError, match="exited 17"):
+        await runner.stage(
+            directory,
+            {"environment": profile, "stages": []},
+            "selector",
+            [sys.executable, "-c", 'print("must not run")'],
+            {"PATH": "/usr/bin:/bin"},
+        )
+    assert not (directory / "selector.stdout.log").read_text()
 
 
 @pytest.fixture

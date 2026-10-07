@@ -128,8 +128,11 @@ def check_whizard(data: bytes, seed: int, nevents: int, energy: float) -> None:
 # Arguments are passed positionally; no caller text is interpolated into shell code.
 # Setup output goes into the stage log, never the MCP stdout channel.
 SETUP_WRAPPER = (
-    'key4hep_setup=$1; shift; key4hep_argv=("$@"); set --; '
-    'source "$key4hep_setup" || exit $?; exec "${key4hep_argv[@]}"'
+    'key4hep_setup=$1; key4hep_release=$2; shift 2; key4hep_argv=("$@"); set --; '
+    'if [[ -n "$key4hep_release" ]]; then '
+    'source "$key4hep_setup" -r "$key4hep_release" || exit $?; '
+    'else source "$key4hep_setup" || exit $?; fi; '
+    'exec "${key4hep_argv[@]}"'
 )
 ACTIVE = {"QUEUED", "RUNNING", "VALIDATING"}
 
@@ -159,12 +162,15 @@ class Runner:
         if release not in self.releases:
             raise ValueError(f"Release is not configured: {release}")
         profile = self.releases[release]
+        setup_args = profile.get("setup_args", [])
+        if setup_args not in ([], ["-r", release]):
+            raise ValueError("setup_args must be omitted/empty or exactly ['-r', declared release]")
         path = Path(profile["setup_script"])
         if not path.is_absolute() or not str(path).startswith("/cvmfs/"):
             raise ValueError("Setup must be an explicit absolute CVMFS path")
         resolved = path.resolve(strict=True)
-        if release not in path.parts and release not in resolved.parts:
-            raise ValueError("Setup path must identify the declared release explicitly")
+        if not setup_args and release not in path.parts and release not in resolved.parts:
+            raise ValueError("Setup must identify the declared release in its path or with -r")
         if not str(resolved).startswith("/cvmfs/"):
             raise ValueError("Resolved setup must remain within CVMFS")
         if any(
@@ -175,7 +181,13 @@ class Runner:
         expected = profile["setup_sha256"]
         if not re.fullmatch(r"[0-9a-f]{64}", expected) or sha256(resolved) != expected:
             raise ValueError("Pinned setup script checksum mismatch")
-        return {"release": release, "setup_script": str(resolved), "setup_sha256": expected}
+        return {
+            "release": release,
+            "setup_script": str(path),
+            "setup_resolved_path": str(resolved),
+            "setup_args": setup_args,
+            "setup_sha256": expected,
+        }
 
     def prepare(
         self,
@@ -315,6 +327,7 @@ class Runner:
             SETUP_WRAPPER,
             "key4hep-setup",
             profile["setup_script"],
+            profile["release"] if profile.get("setup_args") else "",
             *args,
         ]
         record = {
