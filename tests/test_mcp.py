@@ -54,3 +54,16 @@ async def test_real_stdio_handshake(tmp_path):
             result = await session.call_tool("verify_provenance", {"manifest": "manifest.json"})
             assert not result.isError
             assert json.loads(result.content[0].text)["valid"] is False
+
+
+async def test_inspection_failure_is_structured(tmp_path):
+    # Without a Key4hep stack, validation fails inside the subprocess. The tool
+    # must still return the CLI's structured result, not raise.
+    (tmp_path / "events.e4h.root").write_bytes(b"not ROOT")
+    server = create_server(tmp_path)
+    result = await server.call_tool(
+        "validate_edm4hep_file", {"path": "events.e4h.root", "expected_events": 1}
+    )
+    content = result[0] if isinstance(result, tuple) else result
+    report = json.loads(content[0].text)
+    assert report["valid"] is False and report["error"]

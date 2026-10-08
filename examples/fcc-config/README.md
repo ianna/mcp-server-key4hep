@@ -37,6 +37,10 @@ executes the same standard `k4run` command twice in separate directories. It
 records source commits before execution, captures environment and generation
 logs, validates both outputs, writes and verifies both provenance sidecars, and
 writes `comparison.json`. It stops on any failed command or content difference.
+It then runs two control jobs, changing only the Pythia seed and only the Gaudi
+seed, and requires each to *differ* from the left run (`control-*.json`). This
+catches a declared seed that the job silently ignores, which would otherwise
+still replay identically.
 It does not invoke MCP or a custom generation service.
 
 The command in each run is equivalent to:
@@ -51,8 +55,8 @@ k4run /path/to/k4Gen/k4Gen/options/pythia.py \
 
 Inspect `left/preparation.json`, `left/environment.json`, the generation logs,
 `left/provenance.json`, the corresponding right-hand files, and `comparison.json`.
-Success requires verified provenance on each side plus `valid: true` and
-`identical: true` in the comparison. This establishes exact replay within the
+Success requires verified provenance on each run, `valid: true` and
+`identical: true` in `comparison.json`, and `identical: false` in both controls. This establishes exact replay within the
 reported collection scope for this configuration and environment only.
 
 To demonstrate reuse on another FCC card, use its committed path in your normal

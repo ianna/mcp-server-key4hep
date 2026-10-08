@@ -47,10 +47,15 @@ def main(argv=None):
             result = validate(args.file, args.events)
         else:
             result = compare_files(args.left, args.right)
-        if getattr(args, "report", None):
-            provenance.write_new(args.report, result)
     except Exception as exc:
         result = {"valid": False, "error": f"{type(exc).__name__}: {exc}"}
+    # Failures are reported too, so callers (MCP adapter, scripts) always get a
+    # structured result rather than having to scrape stdout.
+    if getattr(args, "report", None):
+        try:
+            provenance.write_new(args.report, result)
+        except Exception as exc:
+            result = {"valid": False, "error": f"Report not written: {type(exc).__name__}: {exc}"}
     print(json.dumps(result, indent=2, sort_keys=True))
     if not result.get("valid", True):
         return 1

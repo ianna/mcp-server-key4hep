@@ -39,7 +39,8 @@ python3 -m mcp_server_key4hep.cli validate events.e4h.root --events 10 --report 
 python3 -m mcp_server_key4hep.cli compare left.e4h.root right.e4h.root --report comparison.json
 ```
 
-Reports are created exclusively; existing files are never overwritten. CLI exit
+Reports are created exclusively; existing files are never overwritten. A failed
+operation still writes its `{"valid": false, "error": ...}` result to the report. CLI exit
 codes are 0 for success/match, 1 for an error or failed validation, and 2 for a
 completed comparison finding different content.
 

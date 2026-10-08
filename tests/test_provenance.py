@@ -145,3 +145,14 @@ def test_multiple_source_repositories(prepared, tmp_path):
     assert len(result["inputs"]) == 2
     assert result["inputs"][0]["snapshot"] != result["inputs"][1]["snapshot"]
     assert all((run / item["snapshot"]).exists() for item in result["inputs"])
+
+
+def test_cli_failure_still_writes_structured_report(tmp_path, capsys):
+    report = tmp_path / "validation.json"
+    assert (
+        main(["validate", str(tmp_path / "missing.root"), "--events", "3", "--report", str(report)])
+        == 1
+    )
+    result = json.loads(report.read_text())
+    assert result["valid"] is False and result["error"]
+    capsys.readouterr()

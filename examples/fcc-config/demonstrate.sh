@@ -34,7 +34,11 @@ for name, item in lock.items():
     subprocess.run(['git', 'clone', '--no-checkout', item['url'], str(repo)], check=True)
     subprocess.run(['git', '-C', str(repo), 'checkout', '--detach', item['commit']], check=True)
 PY
-for side in left right; do
+pythia_seed=$FCC_PYTHIA_SEED
+gaudi_seed=$FCC_GAUDI_SEED
+run_side() {
+  local side=$1
+  export FCC_PYTHIA_SEED=$2 FCC_GAUDI_SEED=$3
   run="$work/$side"
   mkdir "$run"
   cd "$run"
@@ -69,6 +73,24 @@ PY
     --events 10 --exit-code 0 --artifact environment.json \
     --artifact generation.stdout.log --artifact generation.stderr.log
   python3 -m mcp_server_key4hep.cli verify provenance.json
- done
-python3 -m mcp_server_key4hep.cli compare "$work/left/events.e4h.root" \
-  "$work/right/events.e4h.root" --report "$work/comparison.json"
+}
+compare() {
+  python3 -m mcp_server_key4hep.cli compare "$work/$1/events.e4h.root" \
+    "$work/$2/events.e4h.root" --report "$work/$3"
+}
+run_side left "$pythia_seed" "$gaudi_seed"
+run_side right "$pythia_seed" "$gaudi_seed"
+compare left right comparison.json
+# Seed-sensitivity controls. A seed the job silently ignores would still replay
+# identically, so changing each declared seed alone must change event content.
+run_side control-pythia $(( pythia_seed % 900000000 + 1 )) "$gaudi_seed"
+run_side control-gaudi "$pythia_seed" $(( gaudi_seed % 900000000 + 1 ))
+for control in pythia gaudi; do
+  status=0
+  compare left "control-$control" "control-$control.json" > /dev/null || status=$?
+  if (( status != 2 )); then
+    echo "Changing only the $control seed did not change event content (status $status)" >&2
+    exit 1
+  fi
+done
+echo "Replay identical; each declared seed changes event content." >&2
