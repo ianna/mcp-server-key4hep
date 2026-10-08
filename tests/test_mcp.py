@@ -1,61 +1,56 @@
+"""The optional adapter exposes inspection only and confines file access."""
+
 import json
-import subprocess
-import sys
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+import pytest
+
+pytest.importorskip("mcp")
+from mcp_server_key4hep.server import create_server  # noqa: E402
 
 
-async def test_real_stdio_transport(tmp_path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
-    config = tmp_path / "server.json"
-    config.write_text(
-        json.dumps(
-            {"input_repository": str(repo), "output_root": str(tmp_path / "runs"), "releases": {}}
-        )
-    )
-    # Model a sourced stack exposing a conflicting MCP package via PYTHONPATH.
-    shadow = tmp_path / "stack-packages"
-    (shadow / "mcp").mkdir(parents=True)
-    (shadow / "mcp" / "__init__.py").write_text(
-        'raise RuntimeError("Inherited stack package must not be imported")\n'
-    )
-    server = StdioServerParameters(
+async def test_tools_are_inspection_only(tmp_path):
+    server = create_server(tmp_path)
+    names = {tool.name for tool in await server.list_tools()}
+    assert names == {"verify_provenance", "validate_edm4hep_file", "compare_event_content"}
+
+
+async def test_outside_root_and_symlinks_rejected(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}")
+    (root / "link.json").symlink_to(outside)
+    server = create_server(root)
+    for path in ("../outside.json", "link.json", str(outside)):
+        with pytest.raises(Exception, match="(subpath|relative|root)"):
+            await server.call_tool("verify_provenance", {"manifest": path})
+
+
+async def test_verify_works_without_root_modules(tmp_path):
+    (tmp_path / "provenance.json").write_text("{}")
+    server = create_server(tmp_path)
+    result = await server.call_tool("verify_provenance", {"manifest": "provenance.json"})
+    # FastMCP returns content plus structured output for a dictionary result.
+    content = result[0] if isinstance(result, tuple) else result
+    assert json.loads(content[0].text)["valid"] is False
+
+
+async def test_real_stdio_handshake(tmp_path):
+    import sys
+
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    params = StdioServerParameters(
         command=sys.executable,
-        args=["-I", "-m", "mcp_server_key4hep.server", "--config", str(config)],
-        env={"PYTHONPATH": str(shadow)},
+        args=["-I", "-m", "mcp_server_key4hep.server", "--root", str(tmp_path)],
     )
-    async with stdio_client(server) as (read, write):
+    async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            tools = {tool.name: tool for tool in (await session.list_tools()).tools}
-            assert len(tools) == 9
-            assert "compare_event_content" in tools
-            same = await session.call_tool(
-                "compare_event_content", {"left_job_id": "a" * 32, "right_job_id": "a" * 32}
-            )
-            assert same.isError and "distinct" in same.content[0].text
-            assert {"random_seed", "cvmfs_release", "ecm_gev"} <= set(
-                tools["run_pythia8_generation"].inputSchema["required"]
-            )
-            releases = await session.call_tool("list_releases", {})
-            assert not releases.isError
-            assert json.loads(releases.content[0].text) == {"releases": []}
-            for seed in (0, True, "42"):
-                result = await session.call_tool(
-                    "run_pythia8_generation",
-                    {
-                        "process_name": "test",
-                        "nevents": 1,
-                        "random_seed": seed,
-                        "ecm_gev": 91.2,
-                        "cvmfs_release": "missing",
-                        "steering_path": "x.py",
-                        "cmd_card_path": "x.cmd",
-                    },
-                )
-                assert result.isError
-                assert "random_seed" in result.content[0].text
-            assert list((tmp_path / "runs").iterdir()) == []
+            tools = await session.list_tools()
+            assert len(tools.tools) == 3
+            (tmp_path / "manifest.json").write_text("{}")
+            result = await session.call_tool("verify_provenance", {"manifest": "manifest.json"})
+            assert not result.isError
+            assert json.loads(result.content[0].text)["valid"] is False

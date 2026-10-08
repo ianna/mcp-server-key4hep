@@ -1,6 +1,6 @@
 """Exact, ordered EDM4hep content comparison, executed inside the pinned stack.
 
-This deliberately supports MCParticles and optional EventHeader only. It is not
+This deliberately supports MCParticles, optional MCParticlesStable and EventHeader. It is not
 a file-byte comparison, graph-isomorphism check or statistical physics test.
 """
 
@@ -11,9 +11,9 @@ import math
 import sys
 from pathlib import Path
 
-FORMAT = "key4hep-event-content-v1"
+FORMAT = "key4hep-event-content-v2"
 SCOPE = {
-    "collections": ["MCParticles", "EventHeader (optional)"],
+    "collections": ["MCParticles", "MCParticlesStable (optional)", "EventHeader (optional)"],
     "ordering": "event, particle, header and relation order are significant",
     "floats": "exact finite values encoded with float.hex; signed zero is significant",
     "excluded": ["ROOT storage metadata", "file-level metadata", "frame parameters"],
@@ -38,24 +38,32 @@ def oid(obj):
 
 def canonical_event(frame, types):
     names = sorted(str(name) for name in frame.getAvailableCollections())
-    if "MCParticles" not in names or set(names) - {"MCParticles", "EventHeader"}:
+    if "MCParticles" not in names or set(names) - {
+        "MCParticles",
+        "MCParticlesStable",
+        "EventHeader",
+    }:
         raise ValueError(
-            f"Unsupported collection set: {names}; require MCParticles and optional EventHeader"
+            f"Unsupported collection set: {names}; require MCParticles; optional MCParticlesStable and EventHeader"
         )
     collections = {name: frame.get(name) for name in names}
     for name, collection in collections.items():
-        if not isinstance(collection, types[name]):
+        if not isinstance(
+            collection, types["MCParticles" if name == "MCParticlesStable" else name]
+        ):
             actual = getattr(type(collection), "__cpp_name__", type(collection).__name__)
             raise ValueError(f"Wrong C++ type for {name}: {actual}")
-        if collection.isSubsetCollection():
+        if collection.isSubsetCollection() and name != "MCParticlesStable":
             raise ValueError(f"Subset collection is unsupported: {name}")
-    particles = collections["MCParticles"]
     identities = {}
-    for index, particle in enumerate(particles):
-        identity = oid(particle)
-        if identity in identities or identity[1] != index:
-            raise ValueError("MCParticles must have unique, ordered object indices")
-        identities[identity] = index
+    for name, collection in collections.items():
+        if name == "EventHeader" or collection.isSubsetCollection():
+            continue
+        for index, particle in enumerate(collection):
+            identity = oid(particle)
+            if identity in identities or identity[1] != index:
+                raise ValueError("Particles must have unique, ordered object indices")
+            identities[identity] = {"collection": name, "index": index}
 
     def relations(values):
         result = []
@@ -63,35 +71,42 @@ def canonical_event(frame, types):
             if not related.isAvailable() or oid(related) not in identities:
                 raise ValueError("Unresolved or external MCParticle relation")
             # Raw podio collection IDs are storage identifiers, not physics data.
-            result.append({"collection": "MCParticles", "index": identities[oid(related)]})
+            result.append(identities[oid(related)])
         return result
 
-    records = []
-    for particle in particles:
-        record = {
-            "PDG": int(particle.getPDG()),
-            "generatorStatus": int(particle.getGeneratorStatus()),
-            "simulatorStatus": int(particle.getSimulatorStatus()),
-            "charge": real(particle.getCharge()),
-            "time": real(particle.getTime()),
-            "mass": real(particle.getMass()),
-            "vertex": vector(particle.getVertex()),
-            "endpoint": vector(particle.getEndpoint()),
-            "momentum": vector(particle.getMomentum()),
-            "momentumAtEndpoint": vector(particle.getMomentumAtEndpoint()),
-            "parents": relations(particle.getParents()),
-            "daughters": relations(particle.getDaughters()),
-        }
-        # EDM4hep versions differ in their spin representation. Capture every
-        # known available representation, including legacy color-flow fields.
-        if hasattr(particle, "getHelicity"):
-            record["helicity"] = int(particle.getHelicity())
-        if hasattr(particle, "getSpin"):
-            record["spin"] = vector(particle.getSpin())
-        if hasattr(particle, "getColorFlow"):
-            record["colorFlow"] = [int(value) for value in particle.getColorFlow()]
-        records.append(record)
-    result = {"MCParticles": records}
+    result = {}
+    for name, collection in collections.items():
+        if name == "EventHeader":
+            continue
+        if collection.isSubsetCollection():
+            result[name] = {"subset": relations(collection)}
+            continue
+        records = []
+        for particle in collection:
+            record = {
+                "PDG": int(particle.getPDG()),
+                "generatorStatus": int(particle.getGeneratorStatus()),
+                "simulatorStatus": int(particle.getSimulatorStatus()),
+                "charge": real(particle.getCharge()),
+                "time": real(particle.getTime()),
+                "mass": real(particle.getMass()),
+                "vertex": vector(particle.getVertex()),
+                "endpoint": vector(particle.getEndpoint()),
+                "momentum": vector(particle.getMomentum()),
+                "momentumAtEndpoint": vector(particle.getMomentumAtEndpoint()),
+                "parents": relations(particle.getParents()),
+                "daughters": relations(particle.getDaughters()),
+            }
+            # EDM4hep versions differ in their spin representation. Capture every
+            # known available representation, including legacy color-flow fields.
+            if hasattr(particle, "getHelicity"):
+                record["helicity"] = int(particle.getHelicity())
+            if hasattr(particle, "getSpin"):
+                record["spin"] = vector(particle.getSpin())
+            if hasattr(particle, "getColorFlow"):
+                record["colorFlow"] = [int(value) for value in particle.getColorFlow()]
+            records.append(record)
+        result[name] = records
     if "EventHeader" in collections:
         headers = []
         for header in collections["EventHeader"]:

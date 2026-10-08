@@ -185,3 +185,30 @@ def test_event_header_and_optional_legacy_fields():
 def test_empty_samples_not_replay_evidence():
     with pytest.raises(ValueError, match="empty"):
         compare_frames([], [], TYPES)
+
+
+def test_upstream_stable_particle_clones_and_cross_collection_relations():
+    left, right = Frame(10), Frame(20)
+    for frame, identity in ((left, 11), (right, 21)):
+        clone = Particle(0, identity)
+        clone.parents = [frame.get("MCParticles")[0]]
+        frame.collections["MCParticlesStable"] = Particles([clone])
+    assert compare_frames([left], [right], TYPES)["identical"]
+    right.get("MCParticlesStable")[0].values["Mass"] += 0.1
+    result = compare_frames([left], [right], TYPES)
+    assert not result["identical"]
+    assert "MCParticlesStable" in result["first_difference"]["path"]
+
+
+def test_stable_subset_membership_order_and_external_reference():
+    left, right = Frame(10), Frame(20)
+    for frame in (left, right):
+        subset = Particles(frame.get("MCParticles"))
+        subset.isSubsetCollection = lambda: True
+        frame.collections["MCParticlesStable"] = subset
+    assert compare_frames([left], [right], TYPES)["identical"]
+    right.get("MCParticlesStable").reverse()
+    assert not compare_frames([left], [right], TYPES)["identical"]
+    right.get("MCParticlesStable").append(Particle(0, 999))
+    with pytest.raises(ValueError, match="relation"):
+        compare_frames([left], [right], TYPES)

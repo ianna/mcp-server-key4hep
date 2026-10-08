@@ -1,3 +1,3 @@
-"""Reproducible Key4hep job runner and MCP interface."""
+"""Portable provenance and EDM4hep validation; optional MCP adapter."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

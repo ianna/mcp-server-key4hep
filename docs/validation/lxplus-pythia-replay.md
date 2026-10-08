@@ -1,3 +1,6 @@
+> Historical 0.1 evidence: this run used the custom example removed in 0.2.
+> It does not validate the new FCC-config demonstration or v2 content hashes.
+
 # LXPLUS Pythia event-content replay
 
 The operator reported a successful two-run comparison on CERN LXPLUS using

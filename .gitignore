@@ -8,3 +8,4 @@ server-config.local.json
 *.e4h.root
 *.hepmc
 validation-recheck.json
+fcc-demonstration/
