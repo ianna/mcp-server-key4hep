@@ -13,14 +13,20 @@ Key4hep release `2026-04-08` on 7 October 2026. The run generated 10 dimuon even
 at 91.2 GeV with seed 42, containing 131 MCParticles. The full-read EDM4hep
 structural validation passed, and provenance verification reported no errors.
 
-WHIZARD generation/conversion has **not yet been tested on LXPLUS**. Its tests
-use controlled substitutes for the physics stages. The local automated suite
-contains automated tests covering the runner, MCP interface, event comparison, and validation
-decisions; these are separate from the real Pythia smoke run.
+An independent two-run Pythia replay on the same release also passed: both
+10-event samples produced the same canonical event-content SHA-256, with zero
+differing events. See the [LXPLUS replay validation record](docs/validation/lxplus-pythia-replay.md)
+for the reported result, comparison scope, and reproduction command.
 
-The smoke result establishes that this Pythia workflow executes and produces
-structurally valid output on that release. Event-by-event reproducibility,
-physics accuracy, and statistical agreement have **not** been established.
+WHIZARD generation/conversion has **not yet been tested on LXPLUS**. Its tests
+use controlled substitutes for the physics stages. The automated suite covers
+the runner, MCP interface, event comparison, and validation decisions; these
+tests are separate from the real Pythia smoke and replay runs.
+
+The smoke and replay results establish structurally valid output and exact
+event-content agreement for this tested pair within the comparator's scope.
+Reproducibility for other samples or environments, physics accuracy, and
+statistical agreement have **not** been established.
 The included adapters target modern k4Gen with `pythiaExtraSettings` and
 k4FWCore `IOSvc`; qualify your chosen release before production use.
 
@@ -194,7 +200,8 @@ with both values. Indices are zero-based and floating-point diagnostics use hex
 strings. Status is `MATCH`, `DIFFERENT`, or `FAILED`; only `MATCH` establishes
 equality **within the documented scope for this pair of runs**. A matching
 10-event test is not proof of reproducibility for all processes or environments.
-This new comparison still needs its first real LXPLUS replay check.
+The first real LXPLUS replay check passed; its [validation record](docs/validation/lxplus-pythia-replay.md)
+preserves the reported content digest and limitations.
 
 ### Submitting through an agent
 
