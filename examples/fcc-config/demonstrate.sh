@@ -9,10 +9,21 @@ set -euo pipefail
 project=$(cd "$(dirname "$0")/../.." && pwd)
 work=${1:?Supply a NEW absolute work directory}
 [[ "$work" == /* ]] || { echo 'Use an absolute work directory' >&2; exit 2; }
-mkdir "$work"
+[[ ! -e "$work" && ! -L "$work" ]] || { echo "Work directory already exists: $work" >&2; exit 2; }
 export project work
 # Checked-out source is supplied to the stack Python without requiring MCP/uv.
+# CVMFS setup is written for an ordinary interactive shell, not strict mode.
+# Capture its status explicitly and restore our checks before doing any work.
+set +eu
+set +o pipefail
 source /cvmfs/sw.hsf.org/key4hep/setup.sh -r "$KEY4HEP_RELEASE"
+setup_status=$?
+set -euo pipefail
+if (( setup_status != 0 )); then
+  echo "Key4hep setup failed (status $setup_status)" >&2
+  exit "$setup_status"
+fi
+mkdir "$work"
 export PYTHONPATH="$project/src${PYTHONPATH:+:$PYTHONPATH}"
 python3 - <<'PY'
 import json, os, pathlib, subprocess
