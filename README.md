@@ -15,7 +15,7 @@ structural validation passed, and provenance verification reported no errors.
 
 WHIZARD generation/conversion has **not yet been tested on LXPLUS**. Its tests
 use controlled substitutes for the physics stages. The local automated suite
-contains 53 passing tests covering the runner, MCP interface, and validation
+contains automated tests covering the runner, MCP interface, event comparison, and validation
 decisions; these are separate from the real Pythia smoke run.
 
 The smoke result establishes that this Pythia workflow executes and produces
@@ -138,6 +138,64 @@ can be changed with `--timeout`; timeout or interruption cancels active work.
 This is a functional smoke test, not a statistical physics validation. Once it
 passes, connect the server to your agent using the MCP configuration above.
 
+### Compare event content across two identical runs
+
+```sh
+.venv/bin/python -I -m mcp_server_key4hep.smoke \
+  --config server-config.local.json \
+  --release 2026-04-08 --seed 42 --events 10 --replay
+```
+
+This generates **two** independent samples in fresh directories through MCP,
+validates each, then calls `compare_event_content(left_job_id, right_job_id)`.
+The seed and full request are identical for both runs. The command exits zero
+only if both runs succeed, both provenance checks pass, and the compared event
+content matches exactly. The timeout applies to each run and the comparison.
+
+Existing successful jobs can be compared with the same MCP tool without running
+generation again. The tool requires distinct job IDs and matching configuration
+digests (including committed input bytes and Git commit), effective settings,
+recorded software environment, and runner source hash. Different configurations,
+failed runs, or tampered artifacts are rejected. Both inputs are verified before
+and after comparison. A changed configured setup profile is also rejected.
+
+The comparator reads both files with podio and walks events in order, retaining
+one event from each stream at a time. Its versioned representation covers:
+
+- `MCParticles`: PDG, generator/simulator status, charge, time, mass, vertex,
+  endpoint, momentum, endpoint momentum, and ordered parent/daughter links.
+  Helicity, legacy spin and color-flow values are included when those accessors
+  are available in the selected EDM4hep version.
+- Optional `EventHeader`: event/run numbers, event timestamp, weight, and
+  additional weights when available. The event timestamp is event content and
+  is compared, unlike a ROOT file creation timestamp.
+
+Particle order, event order and relation order are significant. Numeric podio
+collection IDs are normalized to the collection name and object index. Finite
+floating-point values use `float.hex()` without rounding or tolerance; signed
+zero is significant. Unknown collection names/types, subsets, invalid relations,
+non-finite floats and zero-event samples fail instead of being declared equal.
+New EDM4hep fields outside this documented list require a comparator update.
+
+ROOT storage timestamps, UUIDs and compression details are excluded. File-level
+metadata and frame parameters are also explicitly outside this first version's
+scope. It does not compare cross-sections or establish physics accuracy.
+
+Each comparison writes a new directory under
+`output_root/comparisons/<comparison_id>/`, containing `comparison.json`, a
+separate `provenance.json`, the exact comparator source, and stage logs. Neither
+original run is changed. The comparison provenance links both parent manifests
+and output-file hashes, records the pinned setup and comparator hash, and hashes
+the resulting report and logs.
+
+The report includes `valid`, `identical`, canonical content SHA-256 values,
+event counts, number of differing events, and the first differing event/field
+with both values. Indices are zero-based and floating-point diagnostics use hex
+strings. Status is `MATCH`, `DIFFERENT`, or `FAILED`; only `MATCH` establishes
+equality **within the documented scope for this pair of runs**. A matching
+10-event test is not proof of reproducibility for all processes or environments.
+This new comparison still needs its first real LXPLUS replay check.
+
 ### Submitting through an agent
 
 1. Review `examples/pythia.py` and `examples/ee_mumu.cmd` against the chosen stack.
@@ -255,9 +313,10 @@ not open arbitrary user-supplied paths. Other collection relations, all metadata
 semantics, cross-sections and physics distributions are not validated.
 
 SHA-256 identifies stored bytes. Identical ROOT file hashes are not promised
-across reruns; timestamps and UUIDs may differ. Statistical physics validation
-and canonical event comparisons are separate future work. Release pinning and
-seeds alone do not establish cross-platform bitwise reproducibility.
+across reruns; timestamps and UUIDs may differ. The replay comparison above uses
+canonical event-content digests instead. Statistical physics validation remains
+separate work. Release pinning and seeds alone do not establish cross-platform
+bitwise reproducibility.
 
 ## Development and release qualification
 

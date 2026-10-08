@@ -20,7 +20,7 @@ async def call(session, name, arguments):
     return json.loads(next(item.text for item in result.content if hasattr(item, "text")))
 
 
-async def exercise(session, spec, timeout, poll_seconds=1):
+async def exercise(session, spec, timeout, poll_seconds=1, completed_jobs=None):
     """Keep the connection alive until completion, cancelling on timeout or interruption."""
     preflight = {**spec, "generator": "pythia8", "card_path": spec["cmd_card_path"]}
     del preflight["cmd_card_path"]
@@ -58,10 +58,28 @@ async def exercise(session, spec, timeout, poll_seconds=1):
             print(json.dumps(validation, indent=2))
             print(f"Output: {Path(job['directory']) / 'events.e4h.root'}")
             print(f"Provenance: {Path(job['directory']) / 'provenance.json'}")
+            if completed_jobs is not None:
+                completed_jobs.append(job_id)
             return 0
     finally:
         if not terminal:
             await call(session, "cancel_job", {"job_id": job_id})
+
+
+async def replay(session, spec, timeout, poll_seconds=1):
+    """Run the identical request twice, then compare verified content through MCP."""
+    jobs = []
+    for attempt in (1, 2):
+        print(f"Replay run {attempt}/2", flush=True)
+        code = await exercise(session, dict(spec), timeout, poll_seconds, completed_jobs=jobs)
+        if code:
+            return code
+    async with asyncio.timeout(timeout):
+        comparison = await call(
+            session, "compare_event_content", {"left_job_id": jobs[0], "right_job_id": jobs[1]}
+        )
+    print(json.dumps(comparison, indent=2))
+    return 0 if comparison.get("valid") is True and comparison.get("identical") is True else 1
 
 
 async def run(args):
@@ -82,6 +100,8 @@ async def run(args):
     async with stdio_client(server) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
+            if args.replay:
+                return await replay(session, spec, args.timeout)
             return await exercise(session, spec, args.timeout)
 
 
@@ -92,6 +112,11 @@ def main():
     parser.add_argument("--seed", required=True, type=int, help="Explicit Pythia random seed")
     parser.add_argument("--events", default=10, type=int, help="Small sample size (1–100)")
     parser.add_argument("--timeout", default=300, type=int, help="Job timeout in seconds")
+    parser.add_argument(
+        "--replay",
+        action="store_true",
+        help="Generate two identical requests and compare their event content",
+    )
     args = parser.parse_args()
     if not 1 <= args.seed <= 900_000_000:
         parser.error("--seed must be between 1 and 900000000")

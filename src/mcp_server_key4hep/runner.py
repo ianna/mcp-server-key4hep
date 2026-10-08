@@ -308,6 +308,133 @@ class Runner:
         for job_id in list(self.tasks):
             await self.cancel(job_id)
 
+    async def compare_event_content(self, left_job_id: str, right_job_id: str) -> dict:
+        """Compare independently executed identical configurations without modifying either run."""
+        if left_job_id == right_job_id:
+            raise ValueError("Choose two distinct jobs; self-comparison cannot establish replay")
+        jobs = [left_job_id, right_job_id]
+        directories = [self.directory(job) for job in jobs]
+        manifests = []
+        for job in jobs:
+            verified = await asyncio.to_thread(self.verify, job)
+            if not verified["valid"]:
+                raise ValueError(f"Unverified input job {job}: {verified['errors']}")
+            manifests.append(self.status(job))
+        left, right = manifests
+        for key in (
+            "configuration_sha256",
+            "effective_settings",
+            "resolved_software",
+            "runner_sha256",
+        ):
+            if left.get(key) != right.get(key):
+                raise ValueError(f"Jobs are not identical replay configurations: {key} differs")
+        profile = self.environment(left["specification"]["cvmfs_release"])
+        if profile != left["environment"]:
+            raise ValueError("Configured environment differs from the original run environment")
+        comparison_id = uuid.uuid4().hex
+        directory = self.output / "comparisons" / comparison_id
+        directory.mkdir(parents=True, mode=0o700)
+        helper = directory / "compare.py"
+        helper.write_bytes(Path(__file__).with_name("compare.py").read_bytes())
+        parents = {
+            side: {
+                "job_id": job,
+                "manifest_sha256": sha256(path / "provenance.json"),
+                "output_sha256": manifest["artifacts"]["events.e4h.root"]["sha256"],
+            }
+            for side, job, path, manifest in zip(("left", "right"), jobs, directories, manifests)
+        }
+        provenance = {
+            "schema_version": 1,
+            "kind": "event_comparison",
+            "comparison_id": comparison_id,
+            "status": "RUNNING",
+            "created_at": now(),
+            "parents": parents,
+            "environment": profile,
+            "configuration_sha256": left["configuration_sha256"],
+            "comparator_sha256": sha256(helper),
+            "stages": [],
+            "artifacts": {},
+        }
+        write_json(directory / "provenance.json", provenance)
+        result = {"valid": False, "identical": False}
+        try:
+            home = directory / "home"
+            home.mkdir()
+            environment = {
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(home),
+                "LANG": "C",
+                "LC_ALL": "C",
+                "PYTHONHASHSEED": "0",
+                "OMP_NUM_THREADS": "1",
+            }
+            async with self.slots:
+                await self.stage(
+                    directory,
+                    provenance,
+                    "comparison",
+                    [
+                        "python3",
+                        str(helper),
+                        str(directories[0] / "events.e4h.root"),
+                        str(directories[1] / "events.e4h.root"),
+                        "comparison.json",
+                    ],
+                    environment,
+                )
+            result = json.loads((directory / "comparison.json").read_text())
+            if result.get("valid") is not True or type(result.get("identical")) is not bool:
+                raise ValueError("Comparison did not produce a valid report")
+            expected = left["specification"]["nevents"]
+            if result.get("events") != {"left": expected, "right": expected}:
+                raise ValueError("Comparison event counts differ from validated inputs")
+            for side, job, path in zip(("left", "right"), jobs, directories):
+                verified = await asyncio.to_thread(self.verify, job)
+                if (
+                    not verified["valid"]
+                    or sha256(path / "provenance.json") != parents[side]["manifest_sha256"]
+                ):
+                    raise ValueError("Input provenance or artifacts changed during comparison")
+            if sha256(helper) != provenance["comparator_sha256"]:
+                raise ValueError("Comparator changed during execution")
+            provenance["status"] = "MATCH" if result["identical"] else "DIFFERENT"
+        except asyncio.CancelledError:
+            provenance["status"] = "CANCELLED"
+            raise
+        except Exception as exc:
+            provenance.update(status="FAILED", error=f"{type(exc).__name__}: {exc}")
+            result = {"valid": False, "identical": False, "error": provenance["error"]}
+            report_path = directory / "comparison.json"
+            if report_path.is_file():
+                try:
+                    result["comparator_report"] = json.loads(report_path.read_text())
+                except (OSError, ValueError):
+                    pass
+            write_json(report_path, result)
+        finally:
+            provenance["finished_at"] = now()
+            for path in directory.iterdir():
+                if (
+                    path.is_file()
+                    and not path.is_symlink()
+                    and path.name not in ("provenance.json", "provenance.tmp")
+                ):
+                    provenance["artifacts"][path.name] = {
+                        "sha256": sha256(path),
+                        "bytes": path.stat().st_size,
+                    }
+            write_json(directory / "provenance.json", provenance)
+        return {
+            **result,
+            "comparison_id": comparison_id,
+            "status": provenance["status"],
+            "report": str(directory / "comparison.json"),
+            "provenance": str(directory / "provenance.json"),
+        }
+
     async def stage(
         self,
         directory: Path,

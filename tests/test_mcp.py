@@ -31,7 +31,12 @@ async def test_real_stdio_transport(tmp_path):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = {tool.name: tool for tool in (await session.list_tools()).tools}
-            assert len(tools) == 8
+            assert len(tools) == 9
+            assert "compare_event_content" in tools
+            same = await session.call_tool(
+                "compare_event_content", {"left_job_id": "a" * 32, "right_job_id": "a" * 32}
+            )
+            assert same.isError and "distinct" in same.content[0].text
             assert {"random_seed", "cvmfs_release", "ecm_gev"} <= set(
                 tools["run_pythia8_generation"].inputSchema["required"]
             )

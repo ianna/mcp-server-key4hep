@@ -312,6 +312,65 @@ async def test_live_input_edits_do_not_change_snapshot(runner, run_spec, monkeyp
     assert (Path(job["directory"]) / "inputs" / "card.cmd").read_text() == "Beams:idA = 11\n"
 
 
+@pytest.mark.parametrize("identical", [True, False])
+async def test_comparison_preserves_both_runs(runner, run_spec, monkeypatch, identical):
+    fake_stages(runner, monkeypatch)
+    jobs = [runner.submit(**run_spec) for _ in range(2)]
+    await asyncio.gather(*runner.tasks.values())
+    before = [sha256(Path(job["directory"]) / "provenance.json") for job in jobs]
+
+    async def comparison(directory, manifest, name, args, environment):
+        assert name == "comparison" and args[0] == "python3"
+        write_json(
+            directory / "comparison.json",
+            {"valid": True, "identical": identical, "events": {"left": 2, "right": 2}},
+        )
+
+    monkeypatch.setattr(runner, "stage", comparison)
+    result = await runner.compare_event_content(*(job["job_id"] for job in jobs))
+    assert result["valid"] and result["identical"] == identical
+    assert result["status"] == ("MATCH" if identical else "DIFFERENT")
+    assert Path(result["report"]).is_file()
+    assert before == [sha256(Path(job["directory"]) / "provenance.json") for job in jobs]
+    assert all(runner.verify(job["job_id"])["valid"] for job in jobs)
+
+
+async def test_comparison_rejects_different_requests_and_self(runner, run_spec, monkeypatch):
+    fake_stages(runner, monkeypatch)
+    jobs = [runner.submit(**run_spec), runner.submit(**{**run_spec, "random_seed": 43})]
+    await asyncio.gather(*runner.tasks.values())
+    with pytest.raises(ValueError, match="distinct"):
+        await runner.compare_event_content(jobs[0]["job_id"], jobs[0]["job_id"])
+    with pytest.raises(ValueError, match="configuration_sha256"):
+        await runner.compare_event_content(*(job["job_id"] for job in jobs))
+
+
+async def test_comparison_rejects_tampered_input(runner, run_spec, monkeypatch):
+    fake_stages(runner, monkeypatch)
+    jobs = [runner.submit(**run_spec) for _ in range(2)]
+    await asyncio.gather(*runner.tasks.values())
+    (Path(jobs[0]["directory"]) / "events.e4h.root").write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="Unverified input"):
+        await runner.compare_event_content(*(job["job_id"] for job in jobs))
+
+
+async def test_comparison_failure_keeps_independent_provenance(runner, run_spec, monkeypatch):
+    fake_stages(runner, monkeypatch)
+    jobs = [runner.submit(**run_spec) for _ in range(2)]
+    await asyncio.gather(*runner.tasks.values())
+
+    async def failure(directory, manifest, name, args, environment):
+        (directory / "comparison.stderr.log").write_text("unsupported collection")
+        raise RuntimeError("comparison failed")
+
+    monkeypatch.setattr(runner, "stage", failure)
+    result = await runner.compare_event_content(*(job["job_id"] for job in jobs))
+    assert not result["valid"] and not result["identical"] and result["status"] == "FAILED"
+    assert Path(result["report"]).is_file()
+    assert Path(result["provenance"]).is_file()
+    assert all(runner.verify(job["job_id"])["valid"] for job in jobs)
+
+
 @pytest.mark.parametrize("failure", ["environment", "generation", "validation"])
 async def test_failed_stages_preserve_manifest(runner, run_spec, monkeypatch, failure):
     fake_stages(runner, monkeypatch, fail=failure)

@@ -136,6 +136,15 @@ def create_server(runner: Runner) -> FastMCP:
         return runner.verify(job_id)
 
     @mcp.tool()
+    async def compare_event_content(left_job_id: str, right_job_id: str) -> dict:
+        """Compare ordered MCParticles and optional EventHeader content from two distinct
+        successful jobs with identical configurations and verified provenance. Exact
+        finite floats; storage metadata excluded. Unknown collections fail. Reports are
+        written separately from the original runs. Inspect valid AND identical.
+        """
+        return await runner.compare_event_content(left_job_id, right_job_id)
+
+    @mcp.tool()
     async def validate_edm4hep_file(job_id: str) -> dict:
         """Return the full-read podio validation report for a completed job, after
         checking its provenance and artifact hashes. Validation runs automatically
