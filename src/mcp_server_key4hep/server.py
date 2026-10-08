@@ -1,189 +1,84 @@
-"""stdio MCP interface. No logs or subprocess output are printed to stdout."""
+"""Optional read-only stdio MCP adapter. No generation or shell execution tools."""
 
 import argparse
+import asyncio
 import json
-from contextlib import asynccontextmanager
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
-from typing import Annotated, Literal
 
-from mcp.server.fastmcp import FastMCP
-from pydantic import Field
-
-from .runner import Runner
-
-Seed = Annotated[int, Field(strict=True, ge=1, le=900_000_000)]
-EventCount = Annotated[int, Field(strict=True, ge=1)]
-Energy = Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]
+from .provenance import verify
 
 
-def create_server(runner: Runner) -> FastMCP:
-    @asynccontextmanager
-    async def lifespan(_server):
-        try:
-            yield {}
-        finally:
-            await runner.close()
+def create_server(root):
+    from mcp.server.fastmcp import FastMCP
 
-    mcp = FastMCP(
-        "mcp-server-key4hep",
-        lifespan=lifespan,
-        instructions="Use only explicit seeds and configured pinned releases. "
-        "Commit steering/card changes before submission. Jobs return immediately; "
-        "check get_job_status and verify_provenance before using output.",
+    root = Path(root).resolve(strict=True)
+    server = FastMCP(
+        "key4hep-validation",
+        instructions=(
+            "Inspect existing files only. Content identity is scoped, not physics validation. "
+            "Provenance verification checks hashes, not execution attestation."
+        ),
     )
+    lock = asyncio.Lock()
 
-    @mcp.tool()
-    async def list_releases() -> dict:
-        """List operator-configured release tags; availability is checked at submission."""
-        return {"releases": sorted(runner.releases)}
+    def resolve(path):
+        target = (root / path).resolve(strict=True)
+        target.relative_to(root)
+        if not target.is_file():
+            raise ValueError("Expected a file inside the configured root")
+        return target
 
-    @mcp.tool()
-    async def run_pythia8_generation(
-        process_name: str,
-        nevents: EventCount,
-        random_seed: Seed,
-        ecm_gev: Energy,
-        cvmfs_release: str,
-        steering_path: str,
-        cmd_card_path: str,
-        extra_inputs: list[str] | None = None,
-    ) -> dict:
-        """Submit Pythia with committed repository-relative inputs. Steering must obey
-        the KEY4HEP_RUN_CONFIG contract; use the included pythia.py example.
-        No input files are edited or committed by this tool.
+    async def inspect(operation, *args):
+        # ROOT can write native diagnostics to stdout. Isolate it from MCP framing.
+        async with lock:
+            with tempfile.TemporaryDirectory(prefix="key4hep-check-") as directory:
+                report = Path(directory) / "report.json"
+                command = [
+                    sys.executable,
+                    "-m",
+                    "mcp_server_key4hep.cli",
+                    operation,
+                    *map(str, args),
+                    "--report",
+                    str(report),
+                ]
+                proc = await asyncio.to_thread(
+                    subprocess.run, command, capture_output=True, text=True, timeout=300
+                )
+                if report.exists():
+                    return json.loads(report.read_text())
+                raise ValueError(f"Inspection failed: {proc.stderr[-2000:]} {proc.stdout[-2000:]}")
+
+    @server.tool()
+    async def verify_provenance(manifest: str) -> dict:
+        """Verify a portable provenance.json and its archived artifacts."""
+        return verify(resolve(manifest))
+
+    @server.tool()
+    async def validate_edm4hep_file(path: str, expected_events: int) -> dict:
+        """Read an existing EDM4hep file and check MCParticle structure and relations."""
+        return await inspect("validate", resolve(path), "--events", expected_events)
+
+    @server.tool()
+    async def compare_event_content(left: str, right: str) -> dict:
+        """Compare exact ordered supported event content, independently of run manifests.
+        A match does not establish that configurations match. Inspect valid and identical.
         """
-        return runner.submit(
-            generator="pythia8",
-            process_name=process_name,
-            nevents=nevents,
-            random_seed=random_seed,
-            ecm_gev=ecm_gev,
-            cvmfs_release=cvmfs_release,
-            steering_path=steering_path,
-            card_path=cmd_card_path,
-            extra_inputs=extra_inputs,
-        )
+        return await inspect("compare", resolve(left), resolve(right))
 
-    @mcp.tool()
-    async def run_whizard_generation(
-        process_name: str,
-        nevents: EventCount,
-        random_seed: Seed,
-        ecm_gev: Energy,
-        cvmfs_release: str,
-        sindarin_file_path: str,
-        converter_path: str,
-        extra_inputs: list[str] | None = None,
-    ) -> dict:
-        """Submit a self-contained, committed basic SM two-to-two Sindarin script,
-        then a committed k4run HepMC-to-EDM4hep converter. Literal seed, n_events,
-        sqrts must match the request. See README for the supported Sindarin dialect.
-        """
-        return runner.submit(
-            generator="whizard",
-            process_name=process_name,
-            nevents=nevents,
-            random_seed=random_seed,
-            ecm_gev=ecm_gev,
-            cvmfs_release=cvmfs_release,
-            steering_path=converter_path,
-            card_path=sindarin_file_path,
-            extra_inputs=extra_inputs,
-        )
-
-    @mcp.tool()
-    async def validate_steering_config(
-        generator: Literal["pythia8", "whizard"],
-        process_name: str,
-        nevents: EventCount,
-        random_seed: Seed,
-        ecm_gev: Energy,
-        cvmfs_release: str,
-        steering_path: str,
-        card_path: str,
-        extra_inputs: list[str] | None = None,
-    ) -> dict:
-        """Preflight release, committed inputs and parameters without running generation.
-        Does not assert physics correctness or compatibility with the chosen stack.
-        """
-        result = runner.prepare(
-            generator=generator,
-            process_name=process_name,
-            nevents=nevents,
-            random_seed=random_seed,
-            ecm_gev=ecm_gev,
-            cvmfs_release=cvmfs_release,
-            steering_path=steering_path,
-            card_path=card_path,
-            extra_inputs=extra_inputs,
-        )
-        result.pop("_inputs")
-        return {"valid": True, **result}
-
-    @mcp.tool()
-    async def get_job_status(job_id: str) -> dict:
-        """Read persisted status, provenance, stage commands and log paths."""
-        return runner.status(job_id)
-
-    @mcp.tool()
-    async def cancel_job(job_id: str) -> dict:
-        """Cancel a queued/running job and terminate its active process group."""
-        return await runner.cancel(job_id)
-
-    @mcp.tool()
-    async def verify_provenance(job_id: str) -> dict:
-        """Re-read provenance.json and verify archived inputs and artifact hashes."""
-        return runner.verify(job_id)
-
-    @mcp.tool()
-    async def compare_event_content(left_job_id: str, right_job_id: str) -> dict:
-        """Compare ordered MCParticles and optional EventHeader content from two distinct
-        successful jobs with identical configurations and verified provenance. Exact
-        finite floats; storage metadata excluded. Unknown collections fail. Reports are
-        written separately from the original runs. Inspect valid AND identical.
-        """
-        return await runner.compare_event_content(left_job_id, right_job_id)
-
-    @mcp.tool()
-    async def validate_edm4hep_file(job_id: str) -> dict:
-        """Return the full-read podio validation report for a completed job, after
-        checking its provenance and artifact hashes. Validation runs automatically
-        before generation can succeed; this tool does not accept arbitrary paths.
-        """
-        verification = runner.verify(job_id)
-        if not verification["valid"]:
-            return verification
-        return {
-            "valid": True,
-            "validation": runner.status(job_id)["validation"],
-            "provenance": verification,
-        }
-
-    return mcp
+    return server
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--config",
-        type=Path,
-        required=True,
-        help="Operator-owned JSON config with repo, output root and pinned releases",
-    )
-    parser.add_argument(
-        "--check-config",
-        action="store_true",
-        help="Check configured release paths/hashes without sourcing the stack or generating events",
+        "--root", type=Path, required=True, help="Only files under this directory may be inspected"
     )
     args = parser.parse_args()
-    runner = Runner(json.loads(args.config.read_text()))
-    if args.check_config:
-        if not runner.releases:
-            parser.error("Configure at least one explicit release")
-        profiles = [runner.environment(tag) for tag in sorted(runner.releases)]
-        print(json.dumps({"valid": True, "releases": profiles}, indent=2))
-        return
-    create_server(runner).run(transport="stdio")
+    create_server(args.root).run(transport="stdio")
 
 
 if __name__ == "__main__":

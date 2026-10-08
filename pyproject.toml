@@ -4,12 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-server-key4hep"
-version = "0.1.0"
-description = "Committed, pinned Key4hep generation workflows exposed over MCP"
+version = "0.2.0"
+description = "Reusable provenance and EDM4hep validation with an optional MCP interface"
 requires-python = ">=3.11"
-dependencies = ["mcp>=1.28,<2"]
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.28,<2"]
 
 [project.scripts]
+key4hep-validate = "mcp_server_key4hep.cli:main"
 mcp-server-key4hep = "mcp_server_key4hep.server:main"
 
 [dependency-groups]

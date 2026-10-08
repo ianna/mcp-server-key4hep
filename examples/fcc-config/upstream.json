@@ -1,0 +1,12 @@
+{
+  "FCC-config": {
+    "url": "https://github.com/HEP-FCC/FCC-config.git",
+    "commit": "4a559aec93298d4a0af509a732c73570756f32f4",
+    "card": "FCCee/Generator/Pythia8/p8_ee_Zmumu_ecm91.cmd"
+  },
+  "k4Gen": {
+    "url": "https://github.com/key4hep/k4Gen.git",
+    "commit": "bc82cca1a6bf66d5882f30af57d0819161990461",
+    "steering": "k4Gen/options/pythia.py"
+  }
+}
